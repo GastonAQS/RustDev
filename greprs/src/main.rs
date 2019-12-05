@@ -4,17 +4,19 @@ use std::env;
 use std::process;
 use greprs::run;
 use greprs::Config;
+use std::io::prelude::*;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
+    let mut stderr = std::io::stderr();
     
     let config = Config::new(&args).unwrap_or_else(|err| {
-        println!("Problem parsing arguments: {}",err);
+        writeln!(&mut stderr, "Problem parsing arguments: {}",err).expect("Could not write to stderr");
         process::exit(1);
     });
 
     if let Err(e) = run(config) {
-        println!("Application error: {}",e);
+        writeln!(&mut stderr, "Application error: {}",e).expect("Could not write to stderr");
         process::exit(1);
     }
 
