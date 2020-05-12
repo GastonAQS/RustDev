@@ -1,100 +1,54 @@
-use std::thread;
-use std::sync::mpsc;
+extern crate threadpool;
+extern crate num_cpus;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::sync::Mutex;
-use std::ops::AddAssign;
+use threadpool::ThreadPool;
+use std::fs::File;
+use std::io::{self, prelude::*};
+use std::path::Path;
 
-pub struct ThreadPool {
-    workers: Vec<Worker>,
-    sender: mpsc::Sender<String>,
+
+pub struct MyThreadpool {
+    threads: ThreadPool,
+    result: Arc<AtomicUsize>
 }
 
-pub struct FuelResult {
-    fuel_requirement: Mutex<usize>,
-}
-
-impl FuelResult {
-    fn new() -> FuelResult {
-        FuelResult {
-            fuel_requirement: Mutex::new(0)
-        }
-    }
-    pub fn update_value(&self,valor: usize) {
-        let mut value = self.fuel_requirement.lock().unwrap();
-        *value += valor
-    }
-    pub fn get_value(&self) -> usize {
-        let value = self.fuel_requirement.lock().unwrap();
-        *value
-    }
-}
-
-// impl AddAssign for FuelResult {
-//     fn add_assign(&mut self, other: Self) {
-//         *self = Self {
-//             fuel_requirement: self.fuel_requirement + other,
-//         }
-//     }
-// }
-
-
-trait FnBox {
-    fn call_box(self: Box<Self>);
-}
-
-impl<F: FnOnce()> FnBox for F {
-    fn call_box(self: Box<Self>) {
-        (*self)()
-    }
-}
-
-struct Worker {
-    id: usize,
-    thread: thread::JoinHandle<()>,
-}
-
-fn process_line(line: &str) -> usize {
-    let mass = line.parse::<usize>().unwrap();
-    (mass/3)-2
-}
-
-impl Worker {
-    fn new(id: usize, receiver: Arc<Mutex<mpsc::Receiver<String>>>) -> Worker {
-        let thread = thread::spawn(move || {
-            loop {
-                let line = receiver.lock().unwrap().recv().unwrap();
-                println!("{}", line);
-            }
-        });
-        Worker {
-            id,
-            thread,
-        }
-    }
-}
-
-
-
-impl ThreadPool {
-    pub fn new(size: usize) -> ThreadPool {
-        assert!(size > 0);
-        let (sender, receiver) = mpsc::channel();
-        let mut workers = Vec::with_capacity(size);
-        let receiver = Arc::new(Mutex::new(receiver));
-        FuelResult::new();
-
-        for i in 0..size {
-            workers.push(Worker::new(i, receiver.clone()));
-        }
-        ThreadPool {
-            workers,
-            sender,
+impl MyThreadpool {
+    pub fn new() -> MyThreadpool {
+        let pool = ThreadPool::with_name("my_threadpool".to_owned(), num_cpus::get());
+        let result = Arc::new(AtomicUsize::new(0));
+        MyThreadpool {
+            threads: pool,
+            result
         }
     }
 
-    pub fn execute(&self, f: String){
-        let job = String::from(f);
-        self.sender.send(job).unwrap();
+    pub fn execute(&self) {
+        if let Ok(lines) = read_file("input.txt") {
+            for line in lines {
+                let t_result = self.result.clone();
+                if let Ok(ip) = line {
+                    println!("{}",ip);
+                    self.threads.execute(move || {
+                        t_result.fetch_add(calculate_mass(&ip),Ordering::Relaxed);
+                    });
+                };
+                
+            };
+        };
+        self.threads.join();
+        let final_result = Arc::try_unwrap(self.result.clone()).unwrap().into_inner();
+        println!("Final result is: {}",final_result);
+        // Shows the correct value but the threads panic and does not print it in console
     }
 }
 
+fn read_file<P>(filename: P) -> io::Result<io::Lines<io::BufReader<File>>> where P: AsRef<Path> {
+    let file = File::open(filename).unwrap();
+    Ok(io::BufReader::new(file).lines())
+}  
+
+fn calculate_mass(value: &str) -> usize {
+    let val = value.parse::<usize>().unwrap();
+    (val/3)-2
+}
